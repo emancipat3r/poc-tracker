@@ -162,9 +162,16 @@ body {
 }
 
 .cve-card:hover {
-  transform: translateY(-4px);
+  transform: translateY(-2px);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
   border-color: rgba(255, 255, 255, 0.15);
+}
+
+.cve-card.expanded {
+  grid-column: 1 / -1;
+  max-width: 800px;
+  border-color: var(--accent-color);
+  box-shadow: 0 12px 40px rgba(99, 102, 241, 0.2);
 }
 
 .cve-header {
@@ -177,6 +184,13 @@ body {
   font-size: 1.1rem;
   font-weight: 600;
   color: var(--accent-color);
+  transition: color var(--transition-speed) ease, text-decoration var(--transition-speed) ease;
+  cursor: pointer;
+}
+
+.cve-id:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
 }
 
 .cve-title {
@@ -263,4 +277,20 @@ select.glass-input option {
 .empty-state svg {
   margin-bottom: 1rem;
   opacity: 0.5;
+}
+
+/* PoC Toggle Button */
+.poc-toggle:hover {
+  background: rgba(99,102,241,0.2) !important;
+  border-color: rgba(99,102,241,0.4) !important;
+}
+
+.poc-toggle:active {
+  transform: scale(0.98);
+}
+
+/* PoC Open Button Hover */
+.poc-section a:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
 }

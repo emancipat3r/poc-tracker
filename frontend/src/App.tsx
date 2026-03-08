@@ -12,7 +12,17 @@ interface CVE {
   published_at: string;
   published_date: string | null;
   is_kev: boolean;
-  pocs: { url: string; description: string }[];
+  epss_score: number | null;
+  epss_percentile: number | null;
+  inthewild_exploited: boolean;
+  pocs: { 
+    url: string; 
+    description: string;
+    source: string;
+    trust_tier: number;
+    trust_score: number | null;
+    flagged_malware: boolean;
+  }[];
   updated_at: string;
 }
 
@@ -24,7 +34,7 @@ interface CVEListResponse {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'LATEST' | 'KEV'>('LATEST');
+  const [activeTab, setActiveTab] = useState<'LATEST' | 'KEV' | 'ACTIONABLE'>('LATEST');
   const [cves, setCves] = useState<CVE[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -45,6 +55,8 @@ function App() {
       if (activeTab === 'KEV') {
         url.searchParams.append('is_kev', 'true');
         url.searchParams.append('has_poc', 'true');
+      } else if (activeTab === 'ACTIONABLE') {
+        url.searchParams.append('is_weaponized', 'true');
       }
       
       const res = await fetch(url.toString());
@@ -97,6 +109,13 @@ function App() {
           style={{ ...(activeTab === 'KEV' ? { background: 'var(--severity-critical)', borderColor: 'var(--severity-critical)' } : {}) }}
         >
           <Flame size={18} /> Trending/Exploited (KEV)
+        </button>
+        <button 
+          className={`glass-button ${activeTab === 'ACTIONABLE' ? 'primary' : ''}`}
+          onClick={() => setActiveTab('ACTIONABLE')}
+          style={{ ...(activeTab === 'ACTIONABLE' ? { background: 'var(--severity-high)', borderColor: 'var(--severity-high)' } : {}) }}
+        >
+          <Activity size={18} /> Actionable / Weaponized
         </button>
       </div>
 
@@ -176,12 +195,51 @@ function App() {
               <p className="cve-desc">{cve.description}</p>
               
               {cve.pocs && cve.pocs.length > 0 && (
-                <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  {cve.pocs.map((poc, idx) => (
-                    <a key={idx} href={poc.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-color)', fontSize: '0.9rem', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(99,102,241,0.1)', padding: '2px 8px', borderRadius: '4px' }}>
-                      <Search size={14} /> View PoC {cve.pocs.length > 1 ? `#${idx + 1}` : ''}
-                    </a>
-                  ))}
+                <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {cve.pocs.map((poc, idx) => {
+                    const isMalware = poc.flagged_malware;
+                    const tierColor = poc.trust_tier === 1 ? 'var(--severity-low)' : poc.trust_tier === 2 ? '#eab308' : 'var(--severity-high)';
+                    
+                    return (
+                      <div key={idx} style={{ 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: '4px', 
+                        background: isMalware ? 'rgba(239,68,68,0.05)' : 'rgba(99,102,241,0.05)', 
+                        padding: '8px', 
+                        borderRadius: '6px', 
+                        border: `1px solid ${isMalware ? 'rgba(239,68,68,0.3)' : 'transparent'}` 
+                      }}>
+                        <a href={poc.url} target="_blank" rel="noreferrer" style={{ 
+                          color: isMalware ? 'var(--severity-critical)' : 'var(--accent-color)', 
+                          fontSize: '0.9rem', 
+                          textDecoration: 'none', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '6px',
+                          fontWeight: '500'
+                        }}>
+                          {isMalware ? <AlertTriangle size={14} /> : <Search size={14} />} 
+                          {isMalware ? 'WARNING: Flagged Malware/Scam' : `View PoC (${poc.source})`}
+                        </a>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                          <span style={{ 
+                            color: tierColor, 
+                            fontWeight: '600',
+                            background: `${tierColor}20`,
+                            padding: '2px 6px',
+                            borderRadius: '4px'
+                          }}>Tier {poc.trust_tier}</span>
+                          {poc.trust_score !== null && (
+                            <span style={{ fontWeight: '500' }}>Score: {poc.trust_score}</span>
+                          )}
+                          {!isMalware && poc.trust_tier === 3 && (
+                            <span style={{ color: 'var(--severity-high)' }}>(Unvetted Discovery)</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               
@@ -191,7 +249,17 @@ function App() {
                 </span>
                 {cve.cvss_score && (
                   <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <AlertTriangle size={14} /> Score: {cve.cvss_score}
+                    <AlertTriangle size={14} /> CVSS: {cve.cvss_score}
+                  </span>
+                )}
+                {cve.epss_score && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--severity-medium)' }}>
+                    <Activity size={14} /> EPSS: {(cve.epss_score * 100).toFixed(2)}%
+                  </span>
+                )}
+                {cve.inthewild_exploited && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--severity-critical)', fontWeight: 'bold' }}>
+                    <Flame size={14} /> In The Wild
                   </span>
                 )}
               </div>

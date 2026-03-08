@@ -15,9 +15,16 @@ type GitHubSearchResponse struct {
 }
 
 type GitHubRepo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	HtmlURL     string `json:"html_url"`
+	Name            string `json:"name"`
+	FullName        string `json:"full_name"`
+	Description     string `json:"description"`
+	HtmlURL         string `json:"html_url"`
+	StargazersCount int    `json:"stargazers_count"`
+	ForksCount      int    `json:"forks_count"`
+	Owner           struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"owner"`
 }
 
 func FetchGitHubAdvisories() {
@@ -56,6 +63,46 @@ func FetchGitHubAdvisories() {
 		}
 
 		if cveID != "" {
+			// Phase 2: Trust Scoring
+			var flaggedMalware bool
+			var trustScore float64 = 0.0
+			
+			// Check blacklist
+			var blacklisted int
+			db.DB.Get(&blacklisted, "SELECT count(*) FROM poc_blacklist WHERE github_user = $1", repo.Owner.Login)
+			if blacklisted > 0 {
+				flaggedMalware = true
+				trustScore -= 10.0
+			}
+
+			if repo.StargazersCount > 5 {
+				trustScore += 5.0
+			} else if repo.StargazersCount == 0 {
+				trustScore -= 2.0
+			}
+
+			if repo.ForksCount > 2 {
+				trustScore += 3.0
+			}
+
+			if repo.Owner.Type == "Organization" {
+				trustScore += 2.0
+			}
+			
+			// Detect obvious scams via regex on name/description
+			descLower := strings.ToLower(repo.Description)
+			if strings.Contains(descLower, "botnet") || strings.Contains(descLower, "malware") || strings.Contains(descLower, "rat") {
+				flaggedMalware = true
+				trustScore -= 5.0
+			}
+
+			// Generate signals JSON
+			signalsBytes, _ := json.Marshal(map[string]interface{}{
+				"stars": repo.StargazersCount,
+				"forks": repo.ForksCount,
+				"owner": repo.Owner.Login,
+			})
+
 			_, err := db.DB.Exec(`
 				INSERT INTO cves (id, title, description, severity) 
 				VALUES ($1, $2, $3, 'UNKNOWN')
@@ -68,20 +115,16 @@ func FetchGitHubAdvisories() {
 				log.Printf("Failed to insert/update GitHub PoC for %s: %v", cveID, err)
 			}
             
-            // Insert into pocs table
+            // Insert into pocs table as Tier 3
             _, err = db.DB.Exec(`
-                INSERT INTO pocs (cve_id, url, description)
-                VALUES ($1, $2, $3)
+                INSERT INTO pocs (cve_id, url, description, source, trust_tier, trust_score, signals, flagged_malware)
+                VALUES ($1, $2, $3, 'github-search', 3, $4, $5, $6)
                 ON CONFLICT (cve_id, url) DO NOTHING
-            `, cveID, repo.HtmlURL, repo.Description)
+            `, cveID, repo.HtmlURL, repo.Description, trustScore, string(signalsBytes), flaggedMalware)
 
             if err != nil {
                 log.Printf("Failed to insert into pocs table for %s: %v", cveID, err)
             }
-			
-			if err != nil {
-				log.Printf("Failed to insert/update GitHub PoC for %s: %v", cveID, err)
-			}
 		}
 	}
 	log.Println("GitHub PoC ingestion complete.")

@@ -43,6 +43,7 @@ func GetCVEs(c *gin.Context) {
 	severity := c.Query("severity")
 	isKev := c.Query("is_kev")
 	hasPoc := c.Query("has_poc")
+	isWeaponized := c.Query("is_weaponized")
 	sortDir := c.DefaultQuery("sort", "desc")
 	
 	if sortDir != "asc" && sortDir != "desc" {
@@ -74,6 +75,10 @@ func GetCVEs(c *gin.Context) {
 	if hasPoc == "true" {
         query += " AND EXISTS (SELECT 1 FROM pocs WHERE pocs.cve_id = cves.id)"
 	}
+	
+	if isWeaponized == "true" {
+        query += " AND (epss_score > 0.1 OR inthewild_exploited = true OR EXISTS (SELECT 1 FROM pocs WHERE pocs.cve_id = cves.id AND trust_tier IN (1, 2)))"
+    }
 
 	query += " ORDER BY COALESCE(published_date, published_at, updated_at) " + sortDir + " LIMIT $" + strconv.Itoa(argId) + " OFFSET $" + strconv.Itoa(argId+1)
 	args = append(args, limit, offset)

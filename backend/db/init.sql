@@ -17,6 +17,14 @@ CREATE TABLE IF NOT EXISTS cves (
     published_at TIMESTAMP WITH TIME ZONE,
     published_date TIMESTAMP WITH TIME ZONE,
     is_kev BOOLEAN DEFAULT false,
+    epss_score FLOAT,
+    epss_percentile FLOAT,
+    inthewild_exploited BOOLEAN DEFAULT false,
+    inthewild_last_seen TIMESTAMP WITH TIME ZONE,
+    cisa_0day BOOLEAN DEFAULT false,
+    has_nuclei_template BOOLEAN DEFAULT false,
+    has_metasploit_module BOOLEAN DEFAULT false,
+    has_exploitdb_entry BOOLEAN DEFAULT false,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -26,8 +34,21 @@ CREATE TABLE IF NOT EXISTS pocs (
     cve_id VARCHAR(50) REFERENCES cves(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
     description TEXT,
+    source VARCHAR(50) NOT NULL DEFAULT 'unknown',
+    trust_tier INT NOT NULL DEFAULT 3,
+    trust_score FLOAT,
+    signals JSONB,
+    flagged_malware BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(cve_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS poc_blacklist (
+    id SERIAL PRIMARY KEY,
+    github_user VARCHAR(255) UNIQUE,
+    repo_pattern VARCHAR(255),
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Seed some initial sources

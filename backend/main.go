@@ -24,6 +24,10 @@ func main() {
 			ingester.FetchRSSFeeds()
 			ingester.FetchGitHubAdvisories()
 			ingester.FetchKEVFeed()
+			ingester.IngestTrickestPocs()
+			ingester.FetchNVDUpdates()
+			ingester.FetchEPSSScores()
+			ingester.FetchInTheWild()
 			time.Sleep(30 * time.Minute) // Fetch every 30 minutes
 		}
 	}()

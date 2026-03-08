@@ -1,0 +1,37 @@
+CREATE TABLE IF NOT EXISTS sources (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL, -- 'github', 'rss'
+    url VARCHAR(255) NOT NULL,
+    last_fetched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cves (
+    id VARCHAR(50) PRIMARY KEY, -- e.g., 'CVE-2023-1000'
+    source_id INTEGER REFERENCES sources(id) ON DELETE SET NULL,
+    title TEXT,
+    description TEXT,
+    severity VARCHAR(50), -- 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNKNOWN'
+    cvss_score NUMERIC(4, 2),
+    published_at TIMESTAMP WITH TIME ZONE,
+    published_date TIMESTAMP WITH TIME ZONE,
+    is_kev BOOLEAN DEFAULT false,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pocs (
+    id SERIAL PRIMARY KEY,
+    cve_id VARCHAR(50) REFERENCES cves(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(cve_id, url)
+);
+
+-- Seed some initial sources
+INSERT INTO sources (name, type, url) VALUES
+('NVD RSS Recent', 'rss', 'https://cve.circl.lu/api/last'),
+('GitHub Security Advisories', 'github', 'advisories')
+ON CONFLICT DO NOTHING;

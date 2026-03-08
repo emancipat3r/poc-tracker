@@ -1,0 +1,53 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# OS
+.DS_Store
+*.swp
+*~
+.AppleDouble
+.LSOverride
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.eslintcache
+
+# Go
+backend/backend
+backend/cve-backend
+backend/tmp/
+backend/coverage.out
+backend/coverage.html
+backend/cp.out
+backend/mem.out
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.vim
+
+# Environment variables
+.env
+.env.test
+.env.production
+.env.local
+
+# Docker
+docker-compose.override.yml
+.docker-compose.override.yml

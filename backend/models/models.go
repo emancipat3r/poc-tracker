@@ -51,7 +51,7 @@ type PoC struct {
 	Source         string          `db:"source" json:"source"`
 	TrustTier      int             `db:"trust_tier" json:"trust_tier"`
 	TrustScore     *float64        `db:"trust_score" json:"trust_score"`
-	Signals        json.RawMessage `db:"signals" json:"signals"`
+	Signals        *json.RawMessage `db:"signals" json:"signals"`
 	FlaggedMalware bool            `db:"flagged_malware" json:"flagged_malware"`
 	CreatedAt      time.Time       `db:"created_at" json:"created_at"`
 }

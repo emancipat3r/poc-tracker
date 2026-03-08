@@ -15,6 +15,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 *~
 .AppleDouble
 .LSOverride
+Thumbs.db
 
 # Node
 node_modules/
@@ -22,15 +23,24 @@ dist/
 dist-ssr/
 *.local
 .eslintcache
+.npm
+.pnpm-store/
 
 # Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 backend/backend
 backend/cve-backend
+backend/poc-tracker
 backend/tmp/
 backend/coverage.out
 backend/coverage.html
 backend/cp.out
 backend/mem.out
+vendor/
 
 # IDEs and Editors
 .idea/
@@ -44,10 +54,21 @@ backend/mem.out
 
 # Environment variables
 .env
-.env.test
-.env.production
-.env.local
+.env.*
+!.env.example
 
 # Docker
 docker-compose.override.yml
 .docker-compose.override.yml
+
+# Trickest clone directory (created at runtime)
+/tmp/trickest-cve/
+
+# Test and coverage
+coverage/
+*.cover
+*.out
+
+# Misc
+*.pem
+*.key

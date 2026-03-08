@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, AlertTriangle, ShieldCheck, Activity, Flame, Clock } from 'lucide-react';
+import { Search, AlertTriangle, ShieldCheck, Activity, Flame, Clock, ChevronDown, ChevronUp, ExternalLink, Code } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface CVE {
@@ -42,6 +42,19 @@ function App() {
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [hasPocFilter, setHasPocFilter] = useState(false);
   const [total, setTotal] = useState(0);
+  const [expandedCves, setExpandedCves] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (cveId: string) => {
+    setExpandedCves(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(cveId)) {
+        newSet.delete(cveId);
+      } else {
+        newSet.add(cveId);
+      }
+      return newSet;
+    });
+  };
 
   const fetchCVEs = async () => {
     setLoading(true);
@@ -179,92 +192,264 @@ function App() {
         </div>
       ) : (
         <div className="cve-grid">
-          {cves.map((cve, i) => (
-            <div 
-              key={cve.id} 
-              className="glass-panel cve-card animate-fade-in" 
-              style={{ animationDelay: `${0.1 + min(i * 0.05, 0.5)}s` }}
-            >
-              <div className="cve-header">
-                <span className="cve-id">{cve.id}</span>
-                <span className={getSeverityBadgeClass(cve.severity)}>
-                  {cve.severity || 'UNKNOWN'}
-                </span>
-              </div>
-              <h3 className="cve-title">{cve.title}</h3>
-              <p className="cve-desc">{cve.description}</p>
-              
-              {cve.pocs && cve.pocs.length > 0 && (
-                <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {cve.pocs.map((poc, idx) => {
-                    const isMalware = poc.flagged_malware;
-                    const tierColor = poc.trust_tier === 1 ? 'var(--severity-low)' : poc.trust_tier === 2 ? '#eab308' : 'var(--severity-high)';
-                    
-                    return (
-                      <div key={idx} style={{ 
-                        display: 'flex', 
-                        flexDirection: 'column', 
-                        gap: '4px', 
-                        background: isMalware ? 'rgba(239,68,68,0.05)' : 'rgba(99,102,241,0.05)', 
-                        padding: '8px', 
-                        borderRadius: '6px', 
-                        border: `1px solid ${isMalware ? 'rgba(239,68,68,0.3)' : 'transparent'}` 
+          {cves.map((cve, i) => {
+            const isExpanded = expandedCves.has(cve.id);
+            const pocCount = cve.pocs?.length || 0;
+
+            return (
+              <div
+                key={cve.id}
+                className={`glass-panel cve-card animate-fade-in ${isExpanded ? 'expanded' : ''}`}
+                style={{
+                  animationDelay: `${0.1 + min(i * 0.05, 0.5)}s`,
+                  cursor: 'pointer'
+                }}
+                onClick={() => toggleExpanded(cve.id)}
+              >
+                {/* Card Header - Always Visible */}
+                <div className="cve-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span className="cve-id">{cve.id}</span>
+                    <span className={getSeverityBadgeClass(cve.severity)}>
+                      {cve.severity || 'UNKNOWN'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {pocCount > 0 && (
+                      <span style={{
+                        background: 'var(--accent-color)',
+                        color: '#fff',
+                        padding: '4px 10px',
+                        borderRadius: '12px',
+                        fontSize: '0.75rem',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
                       }}>
-                        <a href={poc.url} target="_blank" rel="noreferrer" style={{ 
-                          color: isMalware ? 'var(--severity-critical)' : 'var(--accent-color)', 
-                          fontSize: '0.9rem', 
-                          textDecoration: 'none', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: '6px',
-                          fontWeight: '500'
-                        }}>
-                          {isMalware ? <AlertTriangle size={14} /> : <Search size={14} />} 
-                          {isMalware ? 'WARNING: Flagged Malware/Scam' : `View PoC (${poc.source})`}
-                        </a>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                          <span style={{ 
-                            color: tierColor, 
-                            fontWeight: '600',
-                            background: `${tierColor}20`,
-                            padding: '2px 6px',
-                            borderRadius: '4px'
-                          }}>Tier {poc.trust_tier}</span>
-                          {poc.trust_score !== null && (
-                            <span style={{ fontWeight: '500' }}>Score: {poc.trust_score}</span>
-                          )}
-                          {!isMalware && poc.trust_tier === 3 && (
-                            <span style={{ color: 'var(--severity-high)' }}>(Unvetted Discovery)</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                        <Code size={12} />
+                        {pocCount} PoC{pocCount > 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                  </div>
                 </div>
-              )}
-              
-              <div className="cve-footer">
-                <span>
-                  Published: {cve.published_date ? format(new Date(cve.published_date), 'MMM dd, yyyy') : (cve.published_at ? format(new Date(cve.published_at), 'MMM dd, yyyy') : 'Unknown')}
-                </span>
-                {cve.cvss_score && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <AlertTriangle size={14} /> CVSS: {cve.cvss_score}
+
+                {/* Summary Row - Always Visible */}
+                <div className="cve-summary" style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                  fontSize: '0.8rem',
+                  color: 'var(--text-secondary)'
+                }}>
+                  <span>
+                    {cve.published_date ? format(new Date(cve.published_date), 'MMM dd, yyyy') : 'Date unknown'}
                   </span>
-                )}
-                {cve.epss_score && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--severity-medium)' }}>
-                    <Activity size={14} /> EPSS: {(cve.epss_score * 100).toFixed(2)}%
-                  </span>
-                )}
-                {cve.inthewild_exploited && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--severity-critical)', fontWeight: 'bold' }}>
-                    <Flame size={14} /> In The Wild
-                  </span>
+                  {cve.cvss_score && <span>CVSS: {cve.cvss_score}</span>}
+                  {cve.epss_score && <span>EPSS: {(cve.epss_score * 100).toFixed(1)}%</span>}
+                  {cve.is_kev && <span style={{ color: 'var(--severity-critical)' }}>KEV</span>}
+                  {cve.inthewild_exploited && (
+                    <span style={{ color: 'var(--severity-critical)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Flame size={12} /> In The Wild
+                    </span>
+                  )}
+                </div>
+
+                {/* Expanded Content */}
+                {isExpanded && (
+                  <div className="cve-expanded" style={{
+                    marginTop: '1rem',
+                    paddingTop: '1rem',
+                    borderTop: '1px solid var(--border-color)',
+                    animation: 'fadeIn 0.2s ease'
+                  }}>
+                    {/* Description */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Description</h4>
+                      <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
+                        {cve.description && !cve.description.includes('Discovered via')
+                          ? cve.description
+                          : 'No description available yet. NVD enrichment may be pending.'}
+                      </p>
+                    </div>
+
+                    {/* External Links */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <a
+                        href={`https://nvd.nist.gov/vuln/detail/${cve.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 12px',
+                          background: 'rgba(255,255,255,0.05)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          color: 'var(--accent-color)',
+                          textDecoration: 'none',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        <ExternalLink size={14} /> View on NVD
+                      </a>
+                    </div>
+
+                    {/* PoCs Section */}
+                    <div>
+                      <h4 style={{
+                        fontSize: '0.85rem',
+                        color: 'var(--text-secondary)',
+                        marginBottom: '0.75rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <Code size={16} />
+                        Proof of Concepts ({pocCount})
+                      </h4>
+
+                      {pocCount === 0 ? (
+                        <div style={{
+                          padding: '1.5rem',
+                          background: 'rgba(0,0,0,0.2)',
+                          borderRadius: '8px',
+                          textAlign: 'center',
+                          color: 'var(--text-secondary)'
+                        }}>
+                          <Search size={24} style={{ marginBottom: '8px', opacity: 0.5 }} />
+                          <p>No PoCs discovered yet for this CVE.</p>
+                          <p style={{ fontSize: '0.8rem', marginTop: '4px' }}>Check back later - ingestors run every 30 minutes.</p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {cve.pocs.map((poc, idx) => {
+                            const isMalware = poc.flagged_malware;
+                            const tierColor = poc.trust_tier === 1 ? 'var(--severity-low)' : poc.trust_tier === 2 ? '#eab308' : 'var(--severity-high)';
+                            const tierLabel = poc.trust_tier === 1 ? 'Official' : poc.trust_tier === 2 ? 'Vetted' : 'Unvetted';
+
+                            // Extract display name from URL
+                            let displayName = poc.url;
+                            let hostname = '';
+                            try {
+                              const urlObj = new URL(poc.url);
+                              hostname = urlObj.hostname;
+                              if (urlObj.hostname.includes('github.com')) {
+                                const parts = urlObj.pathname.split('/').filter(Boolean);
+                                displayName = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : urlObj.pathname;
+                              } else {
+                                displayName = urlObj.pathname.length > 40
+                                  ? urlObj.pathname.slice(0, 40) + '...'
+                                  : urlObj.pathname;
+                              }
+                            } catch { /* keep original */ }
+
+                            return (
+                              <div
+                                key={idx}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '8px',
+                                  background: isMalware ? 'rgba(239,68,68,0.1)' : 'rgba(99,102,241,0.05)',
+                                  padding: '12px',
+                                  borderRadius: '8px',
+                                  border: `1px solid ${isMalware ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.2)'}`
+                                }}
+                              >
+                                {isMalware && (
+                                  <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    color: 'var(--severity-critical)',
+                                    fontWeight: '600',
+                                    fontSize: '0.8rem'
+                                  }}>
+                                    <AlertTriangle size={14} />
+                                    POTENTIAL MALWARE - USE CAUTION
+                                  </div>
+                                )}
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span style={{
+                                    color: tierColor,
+                                    fontWeight: '600',
+                                    background: `${tierColor}15`,
+                                    padding: '4px 10px',
+                                    borderRadius: '4px',
+                                    fontSize: '0.75rem',
+                                    border: `1px solid ${tierColor}40`
+                                  }}>{tierLabel}</span>
+                                  <span style={{
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '0.75rem',
+                                    background: 'rgba(255,255,255,0.05)',
+                                    padding: '4px 10px',
+                                    borderRadius: '4px'
+                                  }}>via {poc.source}</span>
+                                  {poc.trust_score !== null && (
+                                    <span style={{
+                                      fontSize: '0.75rem',
+                                      color: poc.trust_score > 0 ? 'var(--severity-low)' : 'var(--severity-high)',
+                                      fontWeight: '500'
+                                    }}>
+                                      Trust: {poc.trust_score > 0 ? '+' : ''}{poc.trust_score}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: '12px'
+                                }}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: '0.9rem', fontWeight: '500', marginBottom: '2px' }}>
+                                      {displayName}
+                                    </div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                      {hostname}
+                                    </div>
+                                  </div>
+                                  <a
+                                    href={poc.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      padding: '10px 16px',
+                                      background: isMalware ? 'var(--severity-critical)' : 'var(--accent-color)',
+                                      color: '#fff',
+                                      borderRadius: '6px',
+                                      textDecoration: 'none',
+                                      fontSize: '0.85rem',
+                                      fontWeight: '600',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                  >
+                                    <ExternalLink size={14} />
+                                    Open
+                                  </a>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -1,13 +1,14 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/emancipat3r/poc-tracker/backend/db"
 	"github.com/emancipat3r/poc-tracker/backend/models"
-	
+
 	"github.com/jmoiron/sqlx"
 )
 
@@ -80,7 +81,13 @@ func GetCVEs(c *gin.Context) {
         query += " AND (epss_score > 0.1 OR inthewild_exploited = true OR EXISTS (SELECT 1 FROM pocs WHERE pocs.cve_id = cves.id AND trust_tier IN (1, 2)))"
     }
 
-	query += " ORDER BY COALESCE(published_date, published_at, updated_at) " + sortDir + " LIMIT $" + strconv.Itoa(argId) + " OFFSET $" + strconv.Itoa(argId+1)
+	// Sort by published_date if available, otherwise extract year from CVE ID (e.g., CVE-2024-12345 -> 2024)
+	// and use created_at for ordering within the same year
+	query += ` ORDER BY
+		COALESCE(published_date, published_at) ` + sortDir + ` NULLS LAST,
+		CAST(NULLIF(SPLIT_PART(id, '-', 2), '') AS INTEGER) ` + sortDir + `,
+		created_at ` + sortDir + `
+		LIMIT $` + strconv.Itoa(argId) + ` OFFSET $` + strconv.Itoa(argId+1)
 	args = append(args, limit, offset)
 
 	var cves []models.CVE
@@ -98,14 +105,19 @@ func GetCVEs(c *gin.Context) {
 			cves[i].PoCs = make([]models.PoC, 0) // Initialize empty slice
 			cveMap[cve.ID] = &cves[i]
 		}
-		
+
 		// Use sqlx.In capability for better query efficiency
 		queryPocs, argsPocs, err := sqlx.In("SELECT * FROM pocs WHERE cve_id IN (?)", cveIDs)
-		if err == nil {
+		if err != nil {
+			log.Printf("Error building PoC query: %v", err)
+		} else {
 			queryPocs = db.DB.Rebind(queryPocs) // Convert ? to $1, $2 for postgres
 			var pocs []models.PoC
 			err = db.DB.Select(&pocs, queryPocs, argsPocs...)
-			if err == nil {
+			if err != nil {
+				log.Printf("Error fetching PoCs: %v", err)
+			} else {
+				log.Printf("Fetched %d PoCs for %d CVEs", len(pocs), len(cveIDs))
 				for _, poc := range pocs {
 					if cve, exists := cveMap[poc.CVEID]; exists {
 						cve.PoCs = append(cve.PoCs, poc)

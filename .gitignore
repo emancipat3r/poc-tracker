@@ -64,6 +64,9 @@ docker-compose.override.yml
 # Trickest clone directory (created at runtime)
 /tmp/trickest-cve/
 
+# Claude Code internal dev notes
+poc-tracker-claude-prompt.md
+
 # Test and coverage
 coverage/
 *.cover

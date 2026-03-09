@@ -28,5 +28,50 @@ func InitDB() error {
 
 	DB = db
 	log.Println("Connected to PostgreSQL successfully")
+
+	if err := RunMigrations(); err != nil {
+		return fmt.Errorf("migrations failed: %w", err)
+	}
+
+	return nil
+}
+
+// RunMigrations applies schema additions idempotently so existing databases
+// pick up new columns/tables without requiring a full teardown.
+func RunMigrations() error {
+	migrations := []string{
+		// CHUNK 2: enriched_at for skipping re-enrichment
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMP WITH TIME ZONE`,
+		// CHUNK 3/5: scoring columns
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS hype_score FLOAT DEFAULT 0`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS media_mentions JSONB DEFAULT '{}'`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS reddit_mentions JSONB DEFAULT '[]'`,
+		// CHUNK 5: additional flag columns (most already in init.sql, these are safety additions)
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS inthewild_exploited BOOLEAN DEFAULT false`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS inthewild_last_seen TIMESTAMP WITH TIME ZONE`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS has_nuclei_template BOOLEAN DEFAULT false`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS has_metasploit_module BOOLEAN DEFAULT false`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS has_exploitdb_entry BOOLEAN DEFAULT false`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS epss_score FLOAT`,
+		`ALTER TABLE cves ADD COLUMN IF NOT EXISTS epss_percentile FLOAT`,
+		// CHUNK 2: sync state table
+		`CREATE TABLE IF NOT EXISTS sync_state (
+			source_name TEXT PRIMARY KEY,
+			last_sync_at TIMESTAMP WITH TIME ZONE,
+			last_sync_status TEXT DEFAULT 'never',
+			next_sync_at TIMESTAMP WITH TIME ZONE,
+			checkpoint JSONB DEFAULT '{}'
+		)`,
+		// CHUNK 5: pocs table additions
+		`ALTER TABLE pocs ADD COLUMN IF NOT EXISTS flagged_malware BOOLEAN DEFAULT false`,
+	}
+
+	for _, m := range migrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Migration warning: %v", err)
+		}
+	}
+
+	log.Println("Database migrations applied.")
 	return nil
 }

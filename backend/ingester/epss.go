@@ -1,64 +1,114 @@
 package ingester
 
 import (
-	"encoding/json"
+	"bufio"
+	"compress/gzip"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/emancipat3r/poc-tracker/backend/db"
 )
 
-type EPSSResponse struct {
-	Data []struct {
-		CVE        string `json:"cve"`
-		EPSS       string `json:"epss"`
-		Percentile string `json:"percentile"`
-	} `json:"data"`
+type epssRow struct {
+	cveID      string
+	score      float64
+	percentile float64
 }
 
+// FetchEPSSScores downloads the daily bulk EPSS CSV from FIRST.org/Cyentia,
+// parses it, and updates epss_score / epss_percentile for all known CVEs.
 func FetchEPSSScores() {
-	log.Println("Starting EPSS score ingestion...")
-	var cveIDs []string
-	
-	// Fetch EPSS for CVEs roughly every 24h or if they dont have one yet
-	err := db.DB.Select(&cveIDs, "SELECT id FROM cves WHERE epss_score IS NULL OR updated_at < NOW() - INTERVAL '1 day'")
+	log.Println("Starting EPSS bulk score ingestion...")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	req, _ := http.NewRequest("GET", "https://epss.cyentia.com/epss_scores-current.csv.gz", nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("Failed to fetch CVEs for EPSS: %v", err)
+		log.Printf("EPSS: failed to download bulk CSV: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("EPSS: server returned status %d", resp.StatusCode)
 		return
 	}
 
-	for i := 0; i < len(cveIDs); i += 100 {
-		end := i + 100
-		if end > len(cveIDs) {
-			end = len(cveIDs)
-		}
-		batch := cveIDs[i:end]
-		
-		url := "https://api.first.org/data/v1/epss?cve=" + strings.Join(batch, ",")
-		resp, err := http.Get(url)
-		if err != nil {
-			log.Printf("Failed to fetch EPSS API: %v", err)
-			continue
-		}
-		
-		var epssResp EPSSResponse
-		if err := json.NewDecoder(resp.Body).Decode(&epssResp); err != nil {
-			resp.Body.Close()
-			continue
-		}
-		resp.Body.Close()
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		log.Printf("EPSS: failed to open gzip reader: %v", err)
+		return
+	}
+	defer gz.Close()
 
-		for _, data := range epssResp.Data {
-			epssScore, _ := strconv.ParseFloat(data.EPSS, 64)
-			epssPercentile, _ := strconv.ParseFloat(data.Percentile, 64)
-			db.DB.Exec(`
-				UPDATE cves 
-				SET epss_score = $1, epss_percentile = $2 
-				WHERE id = $3
-			`, epssScore, epssPercentile, data.CVE)
+	// Build a set of CVE IDs we care about to skip rows we don't track
+	var knownCVEs []string
+	if err := db.DB.Select(&knownCVEs, "SELECT id FROM cves WHERE id LIKE 'CVE-%'"); err != nil {
+		log.Printf("EPSS: failed to load known CVE IDs: %v", err)
+		return
+	}
+	known := make(map[string]bool, len(knownCVEs))
+	for _, id := range knownCVEs {
+		known[id] = true
+	}
+
+	var batch []epssRow
+	scanner := bufio.NewScanner(gz)
+	linesRead := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		linesRead++
+
+		// Skip comment and header lines
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "cve") {
+			continue
+		}
+
+		parts := strings.Split(line, ",")
+		if len(parts) < 3 {
+			continue
+		}
+
+		cveID := strings.TrimSpace(parts[0])
+		if !known[cveID] {
+			continue
+		}
+
+		score, err1 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+		pct, err2 := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+
+		batch = append(batch, epssRow{cveID, score, pct})
+
+		if len(batch) >= 500 {
+			flushEPSSBatch(batch)
+			batch = batch[:0]
 		}
 	}
-	log.Println("EPSS ingestion complete.")
+
+	if len(batch) > 0 {
+		flushEPSSBatch(batch)
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("EPSS: scanner error: %v", err)
+	}
+
+	log.Printf("EPSS ingestion complete. Scanned %d lines.", linesRead)
+}
+
+func flushEPSSBatch(rows []epssRow) {
+	for _, r := range rows {
+		db.DB.Exec(`
+			UPDATE cves SET epss_score = $1, epss_percentile = $2 WHERE id = $3
+		`, r.score, r.percentile, r.cveID)
+	}
 }

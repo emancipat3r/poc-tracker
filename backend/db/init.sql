@@ -1,18 +1,18 @@
 CREATE TABLE IF NOT EXISTS sources (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
-    type VARCHAR(50) NOT NULL, -- 'github', 'rss'
+    type VARCHAR(50) NOT NULL,
     url VARCHAR(255) NOT NULL,
     last_fetched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS cves (
-    id VARCHAR(50) PRIMARY KEY, -- e.g., 'CVE-2023-1000'
+    id VARCHAR(50) PRIMARY KEY,
     source_id INTEGER REFERENCES sources(id) ON DELETE SET NULL,
     title TEXT,
     description TEXT,
-    severity VARCHAR(50), -- 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNKNOWN'
+    severity VARCHAR(50) DEFAULT 'UNKNOWN',
     cvss_score NUMERIC(4, 2),
     published_at TIMESTAMP WITH TIME ZONE,
     published_date TIMESTAMP WITH TIME ZONE,
@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS cves (
     has_nuclei_template BOOLEAN DEFAULT false,
     has_metasploit_module BOOLEAN DEFAULT false,
     has_exploitdb_entry BOOLEAN DEFAULT false,
+    hype_score FLOAT DEFAULT 0,
+    media_mentions JSONB DEFAULT '{}',
+    reddit_mentions JSONB DEFAULT '[]',
+    enriched_at TIMESTAMP WITH TIME ZONE,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -36,8 +40,8 @@ CREATE TABLE IF NOT EXISTS pocs (
     description TEXT,
     source VARCHAR(50) NOT NULL DEFAULT 'unknown',
     trust_tier INT NOT NULL DEFAULT 3,
-    trust_score FLOAT,
-    signals JSONB,
+    trust_score FLOAT DEFAULT 0,
+    signals JSONB DEFAULT '{}',
     flagged_malware BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(cve_id, url)
@@ -49,6 +53,14 @@ CREATE TABLE IF NOT EXISTS poc_blacklist (
     repo_pattern VARCHAR(255),
     reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    source_name TEXT PRIMARY KEY,
+    last_sync_at TIMESTAMP WITH TIME ZONE,
+    last_sync_status TEXT DEFAULT 'never',
+    next_sync_at TIMESTAMP WITH TIME ZONE,
+    checkpoint JSONB DEFAULT '{}'
 );
 
 -- Seed some initial sources

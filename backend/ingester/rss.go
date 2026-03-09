@@ -1,75 +1,115 @@
 package ingester
 
 import (
+	"encoding/json"
 	"log"
-	"time"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mmcdole/gofeed"
 	"github.com/emancipat3r/poc-tracker/backend/db"
-	"github.com/emancipat3r/poc-tracker/backend/models"
 )
 
+// securityFeeds defines the security news outlets to monitor.
+// weight is applied in hype score calculation.
+var securityFeeds = []struct {
+	URL    string
+	Outlet string
+	Weight int
+}{
+	{"https://www.bleepingcomputer.com/feed/", "bleepingcomputer", 3},
+	{"https://feeds.feedburner.com/TheHackersNews", "thehackernews", 3},
+	{"https://www.darkreading.com/rss.xml", "darkreading", 2},
+	{"https://www.securityweek.com/feed/", "securityweek", 2},
+	{"https://therecord.media/feed", "therecord", 2},
+}
+
+var cvePattern = regexp.MustCompile(`CVE-\d{4}-\d{4,}`)
+
+type mediaMentions map[string][]mediaMention
+
+type mediaMention struct {
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	Published string `json:"published"`
+}
+
+// FetchRSSFeeds parses the security news RSS feeds, extracts CVE mentions from
+// article titles and descriptions, and stores them as media_mentions signals.
 func FetchRSSFeeds() {
-	var sources []models.Source
-	err := db.DB.Select(&sources, "SELECT * FROM sources WHERE type = 'rss'")
-	if err != nil {
-		log.Printf("Error fetching RSS sources: %v", err)
-		return
-	}
+	log.Println("Starting security news RSS ingestion...")
 
 	fp := gofeed.NewParser()
-	for _, source := range sources {
-		log.Printf("Fetching RSS feed for source: %s", source.URL)
-		feed, err := fp.ParseURL(source.URL)
+	// cveHits accumulates all mentions across feeds: cveID -> outlet -> []mention
+	cveHits := make(map[string]mediaMentions)
+
+	for _, feed := range securityFeeds {
+		log.Printf("RSS: fetching %s (%s)", feed.Outlet, feed.URL)
+		parsed, err := fp.ParseURL(feed.URL)
 		if err != nil {
-			log.Printf("Failed to parse feed %s: %v", source.URL, err)
+			log.Printf("RSS: failed to parse %s: %v", feed.URL, err)
 			continue
 		}
 
-		for _, item := range feed.Items {
-			// Try to extract CVE ID from title or description. Usually, title contains it.
-			title := item.Title
-			desc := item.Description
-			var cveID string
-			if strings.Contains(title, "CVE-") {
-				// Naive extraction
-				parts := strings.Split(title, " ")
-				for _, p := range parts {
-					if strings.HasPrefix(p, "CVE-") {
-						cveID = p
-						break
-					}
-				}
-			}
+		for _, item := range parsed.Items {
+			text := item.Title + " " + item.Description + " " + item.Content
+			cveIDs := uniqueStrings(cvePattern.FindAllString(text, -1))
 
-			if cveID == "" {
-				continue
-			}
-
-			severity := "UNKNOWN"
-			var cvssScore *float64
-
-			publishedTime := time.Now()
+			published := ""
 			if item.PublishedParsed != nil {
-				publishedTime = *item.PublishedParsed
+				published = item.PublishedParsed.Format(time.RFC3339)
 			} else if item.UpdatedParsed != nil {
-				publishedTime = *item.UpdatedParsed
+				published = item.UpdatedParsed.Format(time.RFC3339)
 			}
 
-			_, err = db.DB.Exec(`
-				INSERT INTO cves (id, source_id, title, description, severity, cvss_score, published_at, updated_at) 
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-				ON CONFLICT (id) DO UPDATE 
-				SET title = EXCLUDED.title, description = EXCLUDED.description, updated_at = EXCLUDED.updated_at
-			`, cveID, source.ID, title, desc, severity, cvssScore, publishedTime, time.Now())
+			mention := mediaMention{
+				Title:     item.Title,
+				URL:       item.Link,
+				Published: published,
+			}
 
-			if err != nil {
-				log.Printf("Failed to insert CVE %s: %v", cveID, err)
+			for _, cveID := range cveIDs {
+				cveID = strings.ToUpper(cveID)
+				if _, ok := cveHits[cveID]; !ok {
+					cveHits[cveID] = make(mediaMentions)
+				}
+				cveHits[cveID][feed.Outlet] = append(cveHits[cveID][feed.Outlet], mention)
 			}
 		}
-
-		// Update last fetched at
-		_, _ = db.DB.Exec("UPDATE sources SET last_fetched_at = $1 WHERE id = $2", time.Now(), source.ID)
 	}
+
+	// Persist media_mentions for each CVE we've seen mentioned
+	updated := 0
+	for cveID, mentions := range cveHits {
+		mentionsJSON, err := json.Marshal(mentions)
+		if err != nil {
+			continue
+		}
+
+		// Ensure the CVE exists (create a stub if not)
+		db.DB.Exec(`
+			INSERT INTO cves (id, severity) VALUES ($1, 'UNKNOWN')
+			ON CONFLICT (id) DO NOTHING
+		`, cveID)
+
+		db.DB.Exec(`
+			UPDATE cves SET media_mentions = $1::jsonb WHERE id = $2
+		`, string(mentionsJSON), cveID)
+		updated++
+	}
+
+	log.Printf("RSS ingestion complete. Updated media mentions for %d CVEs.", updated)
+}
+
+func uniqueStrings(ss []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }

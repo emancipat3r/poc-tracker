@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"time"
 
 	"github.com/emancipat3r/poc-tracker/backend/api"
 	"github.com/emancipat3r/poc-tracker/backend/db"
@@ -10,27 +9,13 @@ import (
 )
 
 func main() {
-	// Wait a bit for DB to be ready in docker compose
-	time.Sleep(2 * time.Second)
-	
 	if err := db.InitDB(); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
-	// Start ingestion workers
-	go func() {
-		for {
-			log.Println("Running ingestion cycle...")
-			ingester.FetchRSSFeeds()
-			ingester.FetchGitHubAdvisories()
-			ingester.FetchKEVFeed()
-			ingester.IngestTrickestPocs()
-			ingester.FetchNVDUpdates()
-			ingester.FetchEPSSScores()
-			ingester.FetchInTheWild()
-			time.Sleep(30 * time.Minute) // Fetch every 30 minutes
-		}
-	}()
+	// Start stateful sync coordinator: runs initial cycle immediately,
+	// then ticks every 60 minutes. Workers run sequentially within each cycle.
+	ingester.StartSyncCoordinator()
 
 	r := api.SetupRouter()
 	log.Println("Starting API server on :8080")

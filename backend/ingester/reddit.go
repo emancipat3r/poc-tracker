@@ -38,13 +38,18 @@ type redditMention struct {
 func FetchRedditMentions() {
 	log.Println("Starting Reddit mention ingestion...")
 
-	// Target the most actionable CVEs: recently enriched, with PoCs or KEV status
+	// Target the most actionable CVEs: recently enriched, with PoCs or KEV status.
+	// Also re-fetch CVEs whose reddit data is older than 7 days.
 	var cveIDs []string
 	err := db.DB.Select(&cveIDs, `
 		SELECT id FROM cves
 		WHERE id LIKE 'CVE-%'
 		  AND (is_kev = true OR EXISTS (SELECT 1 FROM pocs WHERE pocs.cve_id = cves.id))
-		  AND (reddit_mentions IS NULL OR reddit_mentions::text = '[]')
+		  AND (
+			reddit_mentions IS NULL
+			OR reddit_mentions::text = '[]'
+			OR updated_at < NOW() - INTERVAL '7 days'
+		  )
 		ORDER BY created_at DESC
 		LIMIT 50
 	`)
@@ -92,8 +97,8 @@ func FetchRedditMentions() {
 		resp.Body.Close()
 
 		if len(result.Data.Children) == 0 {
-			// Store empty array so we don't keep querying
-			db.DB.Exec(`UPDATE cves SET reddit_mentions = '[]'::jsonb WHERE id = $1`, cveID)
+			// Store empty array and update timestamp so staleness check works
+			db.DB.Exec(`UPDATE cves SET reddit_mentions = '[]'::jsonb, updated_at = NOW() WHERE id = $1`, cveID)
 			continue
 		}
 
@@ -114,7 +119,7 @@ func FetchRedditMentions() {
 			continue
 		}
 
-		db.DB.Exec(`UPDATE cves SET reddit_mentions = $1::jsonb WHERE id = $2`, string(mentionsJSON), cveID)
+		db.DB.Exec(`UPDATE cves SET reddit_mentions = $1::jsonb, updated_at = NOW() WHERE id = $2`, string(mentionsJSON), cveID)
 		found += len(mentions)
 	}
 

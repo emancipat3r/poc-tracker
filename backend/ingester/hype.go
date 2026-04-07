@@ -47,11 +47,30 @@ func ComputeHypeScores() {
 		return
 	}
 
+	tx, err := db.DB.Beginx()
+	if err != nil {
+		log.Printf("HypeScore: failed to begin transaction: %v", err)
+		return
+	}
+
+	stmt, err := tx.Preparex(`UPDATE cves SET hype_score = $1 WHERE id = $2`)
+	if err != nil {
+		log.Printf("HypeScore: failed to prepare statement: %v", err)
+		tx.Rollback()
+		return
+	}
+	defer stmt.Close()
+
 	updated := 0
 	for _, cve := range cves {
 		score := computeHype(cve)
-		db.DB.Exec(`UPDATE cves SET hype_score = $1 WHERE id = $2`, score, cve.ID)
+		stmt.Exec(score, cve.ID)
 		updated++
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("HypeScore: failed to commit transaction: %v", err)
+		return
 	}
 
 	log.Printf("Hype scores computed for %d CVEs.", updated)

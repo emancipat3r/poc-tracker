@@ -104,7 +104,7 @@ func GetCVEs(c *gin.Context) {
 	//   3. Sequence number from CVE ID (e.g. -12345)   — NULLS LAST (newer = higher number)
 	//   4. DB insertion time as final tiebreaker
 	dataQuery := "SELECT * FROM cves" + where + ` ORDER BY
-		COALESCE(published_date, published_at) ` + sortDir + ` NULLS LAST,
+		published_date ` + sortDir + ` NULLS LAST,
 		CAST(NULLIF(SPLIT_PART(id, '-', 2), '') AS INTEGER) ` + sortDir + ` NULLS LAST,
 		CAST(NULLIF(SPLIT_PART(id, '-', 3), '') AS INTEGER) ` + sortDir + ` NULLS LAST,
 		created_at ` + sortDir + `

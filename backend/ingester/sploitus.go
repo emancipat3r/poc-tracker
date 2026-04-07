@@ -43,7 +43,11 @@ func FetchSploitusPocs() {
 	client := &http.Client{Timeout: 15 * time.Second}
 	found := 0
 
-	for _, cveID := range cveIDs {
+	for i, cveID := range cveIDs {
+		if i > 0 {
+			time.Sleep(1500 * time.Millisecond) // Rate limit: avoid getting blocked
+		}
+
 		payload, _ := json.Marshal(map[string]interface{}{
 			"type":   "exploits",
 			"sort":   "default",

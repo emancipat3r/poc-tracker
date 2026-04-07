@@ -47,13 +47,12 @@ func FetchKEVFeed() {
 
 		_, err := db.DB.Exec(`
 			INSERT INTO cves (id, title, description, is_kev, published_date, severity)
-			VALUES ($1, $2, $3, $4, $5, 'CRITICAL')
+			VALUES ($1, $2, $3, $4, $5, 'UNKNOWN')
 			ON CONFLICT (id) DO UPDATE
 			SET is_kev = true,
 				title = COALESCE(NULLIF(cves.title, ''), EXCLUDED.title),
 				description = COALESCE(NULLIF(cves.description, ''), EXCLUDED.description),
-				published_date = COALESCE(cves.published_date, EXCLUDED.published_date),
-				severity = CASE WHEN cves.severity IN ('', 'UNKNOWN') THEN 'CRITICAL' ELSE cves.severity END
+				published_date = COALESCE(cves.published_date, EXCLUDED.published_date)
 		`, v.CveID, v.VulnerabilityName, v.ShortDescription, true, publishedDate)
 		
 		if err != nil {

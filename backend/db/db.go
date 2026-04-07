@@ -64,6 +64,9 @@ func RunMigrations() error {
 		)`,
 		// CHUNK 5: pocs table additions
 		`ALTER TABLE pocs ADD COLUMN IF NOT EXISTS flagged_malware BOOLEAN DEFAULT false`,
+		// CHUNK 6: consolidate published_at → published_date, then drop published_at
+		`UPDATE cves SET published_date = published_at WHERE published_date IS NULL AND published_at IS NOT NULL`,
+		`ALTER TABLE cves DROP COLUMN IF EXISTS published_at`,
 	}
 
 	for _, m := range migrations {

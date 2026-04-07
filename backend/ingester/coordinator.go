@@ -92,12 +92,18 @@ func runSyncCycle(source string) {
 		setSyncStatus(name, "success")
 	}
 
-	// Worker execution order (sequential, as specified in CHUNK 2c)
+	// Worker execution order (sequential):
+	// 1. Fetch new CVEs from primary sources
 	run("nvd", FetchNVDUpdates)
 	run("kev", FetchKEVFeed)
+	// 2. Vetted PoC aggregators (Tier 1-2) — run before GitHub so trust scoring can cross-reference
 	run("trickest", IngestTrickestPocs)
-	run("github", FetchGitHubAdvisories)
+	run("nuclei", IngestNucleiTemplates)
+	run("metasploit", IngestMetasploitModules)
 	run("sploitus", FetchSploitusPocs)
+	// 3. Unvetted search (Tier 3) — benefits from knowing which CVEs already have vetted PoCs
+	run("github", FetchGitHubAdvisories)
+	// 4. Signals & enrichment
 	run("rss", FetchRSSFeeds)
 	run("reddit", FetchRedditMentions)
 	run("nvd-enrich", EnrichPendingCVEs)

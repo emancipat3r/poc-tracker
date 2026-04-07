@@ -23,7 +23,6 @@ interface CVE {
   description: string;
   severity: string;
   cvss_score: number | null;
-  published_at: string;
   published_date: string | null;
   is_kev: boolean;
   epss_score: number | null;

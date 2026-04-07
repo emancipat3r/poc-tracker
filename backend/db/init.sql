@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS cves (
     description TEXT,
     severity VARCHAR(50) DEFAULT 'UNKNOWN',
     cvss_score NUMERIC(4, 2),
-    published_at TIMESTAMP WITH TIME ZONE,
     published_date TIMESTAMP WITH TIME ZONE,
     is_kev BOOLEAN DEFAULT false,
     epss_score FLOAT,

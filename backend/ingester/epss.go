@@ -21,6 +21,14 @@ type epssRow struct {
 // FetchEPSSScores downloads the daily bulk EPSS CSV from FIRST.org/Cyentia,
 // parses it, and updates epss_score / epss_percentile for all known CVEs.
 func FetchEPSSScores() {
+	// EPSS CSV updates once daily — skip if we synced within the last 23 hours
+	var lastSync *time.Time
+	db.DB.QueryRow(`SELECT last_sync_at FROM sync_state WHERE source_name = 'epss' AND last_sync_status = 'success'`).Scan(&lastSync)
+	if lastSync != nil && time.Since(*lastSync) < 23*time.Hour {
+		log.Printf("EPSS: last sync was %s ago, skipping (data updates daily).", time.Since(*lastSync).Round(time.Minute))
+		return
+	}
+
 	log.Println("Starting EPSS bulk score ingestion...")
 
 	client := &http.Client{Timeout: 120 * time.Second}

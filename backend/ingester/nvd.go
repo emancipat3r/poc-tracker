@@ -4,11 +4,83 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/emancipat3r/poc-tracker/backend/db"
 )
+
+// Non-PoC domains that appear in NVD references but are vendor/advisory sites
+var nvdNonPoCDomains = []string{
+	"chromium.googlesource.com",
+	"git.kernel.org",
+	"bugzilla.",
+	"bugs.",
+	"support.",
+	"security.",
+	"lists.",
+	"advisories.",
+	"advisory.",
+	"access.redhat.com",
+	"ubuntu.com/security",
+	"oracle.com/security",
+	"msrc.microsoft.com",
+	"portal.msrc.microsoft.com",
+}
+
+// Regex for GitHub repo paths that likely contain actual exploit code
+var githubCodePathRe = regexp.MustCompile(`github\.com/[^/]+/[^/]+/(blob|tree)/`)
+
+// classifyNVDReference returns (trust_tier, is_poc).
+// Tier 1 = confirmed exploit DB (exploit-db, packetstorm).
+// Tier 2 = likely PoC (GitHub repos with code paths, or URLs with "exploit"/"poc" in path).
+// Returns (0, false) if the URL is not a PoC reference.
+func classifyNVDReference(rawURL string) (int, bool) {
+	lower := strings.ToLower(rawURL)
+
+	// Skip known non-PoC domains
+	for _, domain := range nvdNonPoCDomains {
+		if strings.Contains(lower, domain) {
+			return 0, false
+		}
+	}
+
+	// Tier 1: known exploit databases
+	if strings.Contains(lower, "exploit-db.com") || strings.Contains(lower, "packetstormsecurity.com") {
+		return 1, true
+	}
+
+	// GitHub URLs: only if they point to actual code (blob/tree paths)
+	if strings.Contains(lower, "github.com") {
+		// Skip patch commits, issues, pull requests, advisories
+		if strings.Contains(lower, "/commit/") ||
+			strings.Contains(lower, "/issues/") ||
+			strings.Contains(lower, "/pull/") ||
+			strings.Contains(lower, "/advisories/") ||
+			strings.Contains(lower, "/security/") ||
+			strings.Contains(lower, "/releases/") {
+			return 0, false
+		}
+		// Match blob/tree paths (actual code)
+		if githubCodePathRe.MatchString(lower) {
+			return 2, true
+		}
+		// GitHub repo root with "poc" or "exploit" in the path → Tier 2
+		if strings.Contains(lower, "poc") || strings.Contains(lower, "exploit") {
+			return 2, true
+		}
+		// Generic github.com link — not a PoC
+		return 0, false
+	}
+
+	// Non-GitHub URLs with exploit/PoC keywords in path → Tier 2
+	if strings.Contains(lower, "/exploit") || strings.Contains(lower, "/poc") {
+		return 2, true
+	}
+
+	return 0, false
+}
 
 type nvdCVSSV3Data struct {
 	BaseScore    float64 `json:"baseScore"`
@@ -52,10 +124,24 @@ type NVDResponse struct {
 func FetchNVDUpdates() {
 	log.Println("Starting NVD ingestion...")
 
-	// Fetch last 2 hours of updates from NVD
 	now := time.Now().UTC()
-	start := now.Add(-2 * time.Hour).Format("2006-01-02T15:04:05.000")
 	end := now.Format("2006-01-02T15:04:05.000")
+
+	// Load last successful end time from checkpoint to avoid gaps
+	start := now.Add(-2 * time.Hour).Format("2006-01-02T15:04:05.000")
+	var checkpoint json.RawMessage
+	db.DB.QueryRow(`SELECT checkpoint FROM sync_state WHERE source_name = 'nvd'`).Scan(&checkpoint)
+	if len(checkpoint) > 0 {
+		var cp map[string]string
+		if json.Unmarshal(checkpoint, &cp) == nil {
+			if lastEnd, ok := cp["last_mod_end"]; ok {
+				// Parse and subtract 10 min overlap buffer to catch edge-case stragglers
+				if t, err := time.Parse("2006-01-02T15:04:05.000", lastEnd); err == nil {
+					start = t.Add(-10 * time.Minute).Format("2006-01-02T15:04:05.000")
+				}
+			}
+		}
+	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	url := "https://services.nvd.nist.gov/rest/json/cves/2.0?lastModStartDate=" + start + "%2B00:00&lastModEndDate=" + end + "%2B00:00"
@@ -82,6 +168,15 @@ func FetchNVDUpdates() {
 	}
 
 	processNVDVulnerabilities(nvdResp.Vulnerabilities)
+
+	// Save checkpoint so next run starts from this end time
+	cpJSON, _ := json.Marshal(map[string]string{"last_mod_end": end})
+	db.DB.Exec(`
+		INSERT INTO sync_state (source_name, checkpoint)
+		VALUES ('nvd', $1)
+		ON CONFLICT (source_name) DO UPDATE SET checkpoint = $1
+	`, string(cpJSON))
+
 	log.Println("NVD ingestion complete.")
 }
 
@@ -245,15 +340,15 @@ func processNVDVulnerabilities(vulnerabilities []nvdVulnerability) {
 			continue
 		}
 
-		// Add references that look PoC-related as Tier 1
+		// Add references that look PoC-related
 		for _, ref := range cve.References {
-			lowerRef := strings.ToLower(ref.URL)
-			if strings.Contains(lowerRef, "exploit") || strings.Contains(lowerRef, "poc") || strings.Contains(lowerRef, "github.com") {
+			tier, isPoc := classifyNVDReference(ref.URL)
+			if isPoc {
 				db.DB.Exec(`
 					INSERT INTO pocs (cve_id, url, description, source, trust_tier)
-					VALUES ($1, $2, $3, 'nvd-reference', 1)
+					VALUES ($1, $2, $3, 'nvd-reference', $4)
 					ON CONFLICT (cve_id, url) DO NOTHING
-				`, cve.ID, ref.URL, "Official NVD Reference")
+				`, cve.ID, ref.URL, "NVD Reference", tier)
 			}
 		}
 	}

@@ -61,11 +61,13 @@ vendor/
 docker-compose.override.yml
 .docker-compose.override.yml
 
-# Trickest clone directory (created at runtime)
+# Runtime clone directories (created by ingesters)
 /tmp/trickest-cve/
+/tmp/nuclei-templates/
+/tmp/metasploit-framework/
 
-# Claude Code internal dev notes
-poc-tracker-claude-prompt.md
+# Claude Code
+.claude/
 
 # Test and coverage
 coverage/

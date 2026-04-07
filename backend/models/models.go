@@ -21,7 +21,6 @@ type CVE struct {
 	Description        string           `db:"description" json:"description"`
 	Severity           string           `db:"severity" json:"severity"`
 	CVSSScore          *float64         `db:"cvss_score" json:"cvss_score"`
-	PublishedAt        *time.Time       `db:"published_at" json:"published_at"`
 	PublishedDate      *time.Time       `db:"published_date" json:"published_date"`
 	IsKev              bool             `db:"is_kev" json:"is_kev"`
 	EpssScore          *float64         `db:"epss_score" json:"epss_score"`

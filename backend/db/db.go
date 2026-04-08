@@ -67,6 +67,14 @@ func RunMigrations() error {
 		// CHUNK 6: consolidate published_at → published_date, then drop published_at
 		`UPDATE cves SET published_date = published_at WHERE published_date IS NULL AND published_at IS NOT NULL`,
 		`ALTER TABLE cves DROP COLUMN IF EXISTS published_at`,
+		// CHUNK 7: github user caching and tracking current run starts
+		`CREATE TABLE IF NOT EXISTS github_user_cache (
+			login VARCHAR(255) PRIMARY KEY,
+			account_created_at TIMESTAMP WITH TIME ZONE,
+			cve_repo_count INT DEFAULT 0,
+			fetched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS current_run_started_at TIMESTAMP WITH TIME ZONE`,
 	}
 
 	for _, m := range migrations {

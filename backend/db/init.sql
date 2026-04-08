@@ -54,11 +54,19 @@ CREATE TABLE IF NOT EXISTS poc_blacklist (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS github_user_cache (
+    login VARCHAR(255) PRIMARY KEY,
+    account_created_at TIMESTAMP WITH TIME ZONE,
+    cve_repo_count INT DEFAULT 0,
+    fetched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     source_name TEXT PRIMARY KEY,
     last_sync_at TIMESTAMP WITH TIME ZONE,
     last_sync_status TEXT DEFAULT 'never',
     next_sync_at TIMESTAMP WITH TIME ZONE,
+    current_run_started_at TIMESTAMP WITH TIME ZONE,
     checkpoint JSONB DEFAULT '{}'
 );
 

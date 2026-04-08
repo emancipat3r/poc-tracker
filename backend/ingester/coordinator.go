@@ -17,6 +17,12 @@ var (
 // StartSyncCoordinator runs an initial sync cycle, then ticks every 60 minutes.
 // Workers execute sequentially within each cycle to avoid overlapping rate limits.
 func StartSyncCoordinator() {
+	// Startup cleanup for orphaned running workers from previous crashed runs
+	_, err := db.DB.Exec(`UPDATE sync_state SET last_sync_status = 'error', current_run_started_at = NULL WHERE last_sync_status = 'running'`)
+	if err != nil {
+		log.Printf("Failed to clean up orphaned sync statuses: %v", err)
+	}
+
 	go func() {
 		log.Println("Sync coordinator starting initial cycle...")
 		runSyncCycle("")
@@ -115,13 +121,26 @@ func runSyncCycle(source string) {
 }
 
 func setSyncStatus(source, status string) {
-	_, err := db.DB.Exec(`
-		INSERT INTO sync_state (source_name, last_sync_at, last_sync_status)
-		VALUES ($1, NOW(), $2)
-		ON CONFLICT (source_name) DO UPDATE
-		SET last_sync_at = NOW(),
-		    last_sync_status = $2
-	`, source, status)
+	var query string
+	if status == "running" {
+		query = `
+			INSERT INTO sync_state (source_name, current_run_started_at, last_sync_status)
+			VALUES ($1, NOW(), $2)
+			ON CONFLICT (source_name) DO UPDATE
+			SET current_run_started_at = NOW(),
+			    last_sync_status = $2
+		`
+	} else {
+		query = `
+			INSERT INTO sync_state (source_name, last_sync_at, last_sync_status, current_run_started_at)
+			VALUES ($1, NOW(), $2, NULL)
+			ON CONFLICT (source_name) DO UPDATE
+			SET last_sync_at = NOW(),
+			    last_sync_status = $2,
+			    current_run_started_at = NULL
+		`
+	}
+	_, err := db.DB.Exec(query, source, status)
 	if err != nil {
 		log.Printf("Failed to update sync_state for %q: %v", source, err)
 	}

@@ -47,8 +47,8 @@ func FetchRedditMentions() {
 		  AND (is_kev = true OR EXISTS (SELECT 1 FROM pocs WHERE pocs.cve_id = cves.id))
 		  AND (
 			reddit_mentions IS NULL
-			OR reddit_mentions::text = '[]'
-			OR updated_at < NOW() - INTERVAL '7 days'
+			OR (reddit_mentions::text = '[]' AND updated_at < NOW() - INTERVAL '30 days')
+			OR (reddit_mentions::text != '[]' AND updated_at < NOW() - INTERVAL '7 days')
 		  )
 		ORDER BY created_at DESC
 		LIMIT 50

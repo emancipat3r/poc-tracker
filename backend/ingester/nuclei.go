@@ -131,7 +131,11 @@ func IngestNucleiTemplates() {
 // Nuclei templates are in paths like: http/cves/2024/CVE-2024-1234.yaml
 func isNucleiCVETemplate(path string) bool {
 	lower := strings.ToLower(path)
-	return strings.Contains(lower, "cve") && (strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml"))
+	if !strings.Contains(lower, "/cves/") {
+		return false
+	}
+	base := filepath.Base(lower)
+	return strings.HasPrefix(base, "cve-") && (strings.HasSuffix(base, ".yaml") || strings.HasSuffix(base, ".yml"))
 }
 
 // extractCVEIDsFromNucleiTemplate reads a YAML template and extracts CVE IDs

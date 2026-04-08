@@ -188,7 +188,7 @@ func EnrichPendingCVEs() {
 		SELECT id FROM cves
 		WHERE enriched_at IS NULL AND id LIKE 'CVE-%'
 		ORDER BY created_at DESC
-		LIMIT 200
+		LIMIT 1000
 	`)
 	if err != nil {
 		log.Printf("Failed to query pending CVEs for enrichment: %v", err)

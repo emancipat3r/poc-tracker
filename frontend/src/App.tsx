@@ -268,7 +268,7 @@ function App() {
                 </div>
 
                 {/* Description preview (collapsed only) */}
-                {!isExpanded && cve.description && !cve.description.includes('Discovered via') && (
+                {!isExpanded && cve.description && (
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.4', marginTop: '0.5rem', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                     {cve.description.slice(0, 150)}{cve.description.length > 150 ? '…' : ''}
                   </p>
@@ -281,9 +281,7 @@ function App() {
                     <div style={{ marginBottom: '1rem' }}>
                       <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Description</h4>
                       <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
-                        {cve.description && !cve.description.includes('Discovered via')
-                          ? cve.description
-                          : 'No description available yet. NVD enrichment may be pending.'}
+                        {cve.description || 'No description available yet. NVD enrichment may be pending.'}
                       </p>
                     </div>
 

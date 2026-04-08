@@ -65,7 +65,7 @@ func IngestTrickestPocs() {
 	}
 
 	// 5. Determine which files to process
-	urlRegex := regexp.MustCompile(`https?://[^\s)\]"']+`)
+	urlRegex := regexp.MustCompile(`(?i)https?://[^\s)\]"',;<>]+`)
 	var filesToProcess []string
 
 	if !isFirstRun && lastHash != "" && lastHash != currentHead {
@@ -111,6 +111,7 @@ func IngestTrickestPocs() {
 		urls := urlRegex.FindAllString(string(content), -1)
 		var validURLs []string
 		for _, u := range urls {
+			u = strings.TrimRight(u, ".,;")
 			if strings.Contains(u, "trickest") || strings.Contains(u, "shields.io") || strings.Contains(u, "nvd.nist.gov") {
 				continue
 			}

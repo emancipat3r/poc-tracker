@@ -120,21 +120,23 @@ func FetchGitHubAdvisories() {
 		}
 		resp.Body.Close()
 
-		// Dedupe unique owners before querying metadata
-		uniqueOwners := make(map[string]githubUserMeta)
+		// Filter matching repos first
+		var matching []GitHubRepo
 		for _, repo := range searchResp.Items {
+			if extractCVEID(cveRegex, repo.Name, repo.Description) == cveID {
+				matching = append(matching, repo)
+			}
+		}
+
+		// Dedupe owners from matching repos only
+		uniqueOwners := make(map[string]githubUserMeta)
+		for _, repo := range matching {
 			if _, exists := uniqueOwners[repo.Owner.Login]; !exists {
 				uniqueOwners[repo.Owner.Login] = getGitHubUserMetadata(client, repo.Owner.Login)
 			}
 		}
 
-		for _, repo := range searchResp.Items {
-			// Verify the repo actually references this CVE
-			extractedID := extractCVEID(cveRegex, repo.Name, repo.Description)
-			if extractedID != cveID {
-				continue
-			}
-
+		for _, repo := range matching {
 			meta := uniqueOwners[repo.Owner.Login]
 			trustScore, flaggedMalware := computeGitHubTrust(repo, cveID, client, meta)
 
@@ -244,17 +246,6 @@ func computeGitHubTrust(repo GitHubRepo, cveID string, client *http.Client, meta
 		score -= 2
 	}
 
-	// --- File extension check (Webrat detection) ---
-	// Malware repos typically contain only a README and a password-protected ZIP.
-	// Real PoCs have actual code files (.py, .c, .go, etc.)
-	hasCodeFile := checkRepoHasCodeFiles(client, repo.FullName)
-	if hasCodeFile {
-		score += 4
-	} else {
-		score -= 5
-		flaggedMalware = true
-	}
-
 	// --- Account age & CVE mass count checks (Webrat detection) ---
 	if meta.AccountAgeDays >= 0 {
 		if meta.AccountAgeDays < 30 {
@@ -272,6 +263,21 @@ func computeGitHubTrust(repo GitHubRepo, cveID string, client *http.Client, meta
 		flaggedMalware = true
 	} else if meta.CveRepoCount < 4 {
 		score += 1
+	}
+
+	// --- File extension check (Webrat detection) ---
+	// Real PoCs have actual code files (.py, .c, .go, etc.)
+	if flaggedMalware {
+		// If owner metadata or scam keywords scream "malware", skip the extra tree check
+		score -= 5
+	} else {
+		hasCodeFile := checkRepoHasCodeFiles(client, repo.FullName)
+		if hasCodeFile {
+			score += 4
+		} else {
+			score -= 5
+			flaggedMalware = true
+		}
 	}
 
 	return score, flaggedMalware
@@ -491,10 +497,11 @@ func getGitHubUserMetadata(client *http.Client, username string) githubUserMeta 
 			    fetched_at = NOW()
 		`, username, created, meta.CveRepoCount)
 	} else if !created.IsZero() {
-		// Save account age without disturbing the stale cve_repo_count clock
+		// Save account age, initialize cve_repo_count to 0, but set fetched_at to NULL 
+		// so that next time we hit this owner, the cve_repo_count fetches fresh correctly.
 		db.DB.Exec(`
-			INSERT INTO github_user_cache (login, account_created_at)
-			VALUES ($1, $2)
+			INSERT INTO github_user_cache (login, account_created_at, cve_repo_count, fetched_at)
+			VALUES ($1, $2, 0, NULL)
 			ON CONFLICT (login) DO UPDATE
 			SET account_created_at = EXCLUDED.account_created_at
 		`, username, created)

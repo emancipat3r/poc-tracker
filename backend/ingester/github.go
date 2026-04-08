@@ -1,6 +1,7 @@
 package ingester
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -16,6 +17,9 @@ import (
 var (
 	coreRateLimitExhausted atomic.Bool
 	coreRateLimitReset     atomic.Int64 // Unix timestamp
+
+	searchRateLimitExhausted atomic.Bool
+	searchRateLimitReset     atomic.Int64 // Unix timestamp
 )
 
 type GitHubSearchResponse struct {
@@ -79,6 +83,11 @@ func FetchGitHubAdvisories() {
 			time.Sleep(6500 * time.Millisecond)
 		}
 
+		if isSearchAPIExhausted() {
+			log.Printf("GitHub: search API rate limited, stopping early")
+			break
+		}
+
 		// Search for this specific CVE ID in repo names and descriptions
 		searchURL := "https://api.github.com/search/repositories?q=" + cveID + "+in:name,description&sort=updated&order=desc&per_page=10"
 		req, _ := http.NewRequest("GET", searchURL, nil)
@@ -89,6 +98,8 @@ func FetchGitHubAdvisories() {
 			log.Printf("GitHub: failed to search for %s: %v", cveID, err)
 			continue
 		}
+
+		checkSearchRateLimit(resp)
 
 		if resp.StatusCode == 403 || resp.StatusCode == 429 {
 			log.Printf("GitHub: rate limited, stopping early after %d CVEs", i)
@@ -109,6 +120,14 @@ func FetchGitHubAdvisories() {
 		}
 		resp.Body.Close()
 
+		// Dedupe unique owners before querying metadata
+		uniqueOwners := make(map[string]githubUserMeta)
+		for _, repo := range searchResp.Items {
+			if _, exists := uniqueOwners[repo.Owner.Login]; !exists {
+				uniqueOwners[repo.Owner.Login] = getGitHubUserMetadata(client, repo.Owner.Login)
+			}
+		}
+
 		for _, repo := range searchResp.Items {
 			// Verify the repo actually references this CVE
 			extractedID := extractCVEID(cveRegex, repo.Name, repo.Description)
@@ -116,7 +135,8 @@ func FetchGitHubAdvisories() {
 				continue
 			}
 
-			trustScore, flaggedMalware := computeGitHubTrust(repo, cveID, client)
+			meta := uniqueOwners[repo.Owner.Login]
+			trustScore, flaggedMalware := computeGitHubTrust(repo, cveID, client, meta)
 
 			signals, _ := json.Marshal(map[string]interface{}{
 				"stars":           repo.StargazersCount,
@@ -160,7 +180,7 @@ var codeFileExtensions = map[string]bool{
 
 // computeGitHubTrust returns a trust score and malware flag for a GitHub repo.
 // The client parameter is used for additional API calls (file listing, account age).
-func computeGitHubTrust(repo GitHubRepo, cveID string, client *http.Client) (float64, bool) {
+func computeGitHubTrust(repo GitHubRepo, cveID string, client *http.Client, meta githubUserMeta) (float64, bool) {
 	var score float64
 	flaggedMalware := false
 
@@ -236,7 +256,6 @@ func computeGitHubTrust(repo GitHubRepo, cveID string, client *http.Client) (flo
 	}
 
 	// --- Account age & CVE mass count checks (Webrat detection) ---
-	meta := getGitHubUserMetadata(client, repo.Owner.Login)
 	if meta.AccountAgeDays >= 0 {
 		if meta.AccountAgeDays < 30 {
 			score -= 6
@@ -261,7 +280,7 @@ func computeGitHubTrust(repo GitHubRepo, cveID string, client *http.Client) (flo
 func checkRateLimit(resp *http.Response) {
 	remStr := resp.Header.Get("X-RateLimit-Remaining")
 	resStr := resp.Header.Get("X-RateLimit-Reset")
-	
+
 	if remStr != "" {
 		if rem, err := strconv.Atoi(remStr); err == nil && rem < 10 {
 			coreRateLimitExhausted.Store(true)
@@ -293,6 +312,40 @@ func isCoreAPIExhausted() bool {
 	return false
 }
 
+func checkSearchRateLimit(resp *http.Response) {
+	remStr := resp.Header.Get("X-RateLimit-Remaining")
+	resStr := resp.Header.Get("X-RateLimit-Reset")
+
+	if remStr != "" {
+		if rem, err := strconv.Atoi(remStr); err == nil && rem < 10 {
+			searchRateLimitExhausted.Store(true)
+			if reset, err := strconv.ParseInt(resStr, 10, 64); err == nil {
+				searchRateLimitReset.Store(reset)
+			}
+		}
+	} else if resp.StatusCode == 403 || resp.StatusCode == 429 {
+		searchRateLimitExhausted.Store(true)
+		if resStr != "" {
+			if reset, err := strconv.ParseInt(resStr, 10, 64); err == nil {
+				searchRateLimitReset.Store(reset)
+			}
+		} else {
+			searchRateLimitReset.Store(time.Now().Unix() + 60)
+		}
+	}
+}
+
+func isSearchAPIExhausted() bool {
+	if searchRateLimitExhausted.Load() {
+		if time.Now().Unix() > searchRateLimitReset.Load() {
+			searchRateLimitExhausted.Store(false)
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 // checkRepoHasCodeFiles checks if a GitHub repo contains any actual code files
 // by making a single call to the recursed git trees endpoint.
 func checkRepoHasCodeFiles(client *http.Client, fullName string) bool {
@@ -302,7 +355,7 @@ func checkRepoHasCodeFiles(client *http.Client, fullName string) bool {
 
 	req, err := http.NewRequest("GET", "https://api.github.com/repos/"+fullName+"/git/trees/HEAD?recursive=1", nil)
 	if err != nil {
-		return true 
+		return true
 	}
 	req.Header.Set("User-Agent", "poc-tracker/1.0")
 
@@ -354,8 +407,8 @@ type githubUserMeta struct {
 // getGitHubUserMetadata returns cached/fresh data about a given user.
 func getGitHubUserMetadata(client *http.Client, username string) githubUserMeta {
 	meta := githubUserMeta{AccountAgeDays: -1, CveRepoCount: 0}
-	var cachedAge time.Time
-	var cachedFetchedAt time.Time
+	var cachedAge sql.NullTime
+	var cachedFetchedAt sql.NullTime
 	var cachedCount int
 
 	err := db.DB.QueryRow(`
@@ -364,11 +417,11 @@ func getGitHubUserMetadata(client *http.Client, username string) githubUserMeta 
 		WHERE login = $1
 	`, username).Scan(&cachedAge, &cachedCount, &cachedFetchedAt)
 
-	ageStale := err != nil || cachedAge.IsZero()
-	countStale := err != nil || time.Since(cachedFetchedAt).Hours() > 24*7
+	ageStale := err != nil || !cachedAge.Valid
+	countStale := err != nil || !cachedFetchedAt.Valid || time.Since(cachedFetchedAt.Time).Hours() > 24*7
 
 	if !ageStale {
-		meta.AccountAgeDays = int(time.Since(cachedAge).Hours() / 24)
+		meta.AccountAgeDays = int(time.Since(cachedAge.Time).Hours() / 24)
 	}
 	meta.CveRepoCount = cachedCount
 
@@ -377,56 +430,75 @@ func getGitHubUserMetadata(client *http.Client, username string) githubUserMeta 
 	}
 
 	var created time.Time
-	if ageStale {
-		if !isCoreAPIExhausted() {
+	if ageStale && !isCoreAPIExhausted() {
+		func() {
 			req, _ := http.NewRequest("GET", "https://api.github.com/users/"+username, nil)
 			req.Header.Set("User-Agent", "poc-tracker/1.0")
-			if resp, err := client.Do(req); err == nil {
-				defer resp.Body.Close()
-				checkRateLimit(resp)
-				if resp.StatusCode == http.StatusOK {
-					var user struct {
-						CreatedAt time.Time `json:"created_at"`
-					}
-					if json.NewDecoder(resp.Body).Decode(&user) == nil {
-						created = user.CreatedAt
-						if !created.IsZero() {
-							meta.AccountAgeDays = int(time.Since(created).Hours() / 24)
-						}
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+			checkRateLimit(resp)
+			if resp.StatusCode == http.StatusOK {
+				var user struct {
+					CreatedAt time.Time `json:"created_at"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&user) == nil {
+					created = user.CreatedAt
+					if !created.IsZero() {
+						meta.AccountAgeDays = int(time.Since(created).Hours() / 24)
 					}
 				}
 			}
-		}
-	} else {
-		created = cachedAge
+		}()
+	} else if !ageStale {
+		created = cachedAge.Time
 	}
 
-	if countStale {
-		searchURL := "https://api.github.com/search/repositories?q=user:" + username + "+CVE-+in:name&per_page=1"
-		req, _ := http.NewRequest("GET", searchURL, nil)
-		req.Header.Set("User-Agent", "poc-tracker/1.0")
-		if resp, err := client.Do(req); err == nil {
+	countFetchSucceeded := false
+	if countStale && !isSearchAPIExhausted() {
+		func() {
+			searchURL := "https://api.github.com/search/repositories?q=user:" + username + "+CVE-+in:name&per_page=1"
+			req, _ := http.NewRequest("GET", searchURL, nil)
+			req.Header.Set("User-Agent", "poc-tracker/1.0")
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
 			defer resp.Body.Close()
+			checkSearchRateLimit(resp)
 			if resp.StatusCode == http.StatusOK {
 				var res struct {
 					TotalCount int `json:"total_count"`
 				}
 				if json.NewDecoder(resp.Body).Decode(&res) == nil {
 					meta.CveRepoCount = res.TotalCount
+					countFetchSucceeded = true
 				}
 			}
-		}
+		}()
 	}
 
-	// Wait to save until created is initialized to something, or save what we have if count was updated.
-	db.DB.Exec(`
-		INSERT INTO github_user_cache (login, account_created_at, cve_repo_count, fetched_at)
-		VALUES ($1, NULLIF($2::timestamp with time zone, '0001-01-01 00:00:00+00'::timestamp with time zone), $3, NOW())
-		ON CONFLICT (login) DO UPDATE
-		SET account_created_at = COALESCE(EXCLUDED.account_created_at, github_user_cache.account_created_at),
-		    cve_repo_count = EXCLUDED.cve_repo_count,
-		    fetched_at = NOW()
-	`, username, created, meta.CveRepoCount)
+	// Only bump fetched_at if we successfully fetched fresh search counts
+	if countFetchSucceeded {
+		db.DB.Exec(`
+			INSERT INTO github_user_cache (login, account_created_at, cve_repo_count, fetched_at)
+			VALUES ($1, NULLIF($2::timestamp with time zone, '0001-01-01 00:00:00+00'::timestamp with time zone), $3, NOW())
+			ON CONFLICT (login) DO UPDATE
+			SET account_created_at = COALESCE(EXCLUDED.account_created_at, github_user_cache.account_created_at),
+			    cve_repo_count = EXCLUDED.cve_repo_count,
+			    fetched_at = NOW()
+		`, username, created, meta.CveRepoCount)
+	} else if !created.IsZero() {
+		// Save account age without disturbing the stale cve_repo_count clock
+		db.DB.Exec(`
+			INSERT INTO github_user_cache (login, account_created_at)
+			VALUES ($1, $2)
+			ON CONFLICT (login) DO UPDATE
+			SET account_created_at = EXCLUDED.account_created_at
+		`, username, created)
+	}
 
 	return meta
 }
